@@ -112,9 +112,11 @@ GOAL_REWARD = 10.0
 
 # Kivy Configuration
 Config.set("input", "mouse", "mouse,multitouch_on_demand")
-Config.set("graphics", "resizable", False)
+Config.set("graphics", "resizable", True)
 Config.set("graphics", "width", str(WINDOW_WIDTH))
 Config.set("graphics", "height", str(WINDOW_HEIGHT))
+# Config.set("graphics", "minimum_width", "800")
+# Config.set("graphics", "minimum_height", "600")
 
 
 @dataclass
@@ -464,32 +466,40 @@ class Game(Widget):
         """Check if car is on sand"""
         return game_state.sand[int(self.car.x), int(self.car.y)] > 0
 
+    def _calculate_distance_reward(self, base_reward):
+        """Calculate reward based on distance to goal and add to base reward"""
+        distance = self._calculate_distance()
+        total_reward = base_reward
+        
+        if distance < game_state.last_distance:
+            total_reward += CLOSER_TO_GOAL_REWARD
+            logger.info(
+                f"Moving closer to goal - Distance: {distance:.2f}, "
+                f"Last distance: {game_state.last_distance:.2f}, "
+                f"Total reward: {total_reward:.2f}"
+            )
+        else:
+            logger.debug(
+                f"Distance to goal: {distance:.2f}, "
+                f"Last distance: {game_state.last_distance:.2f}, "
+                f"Reward: {total_reward:.2f}"
+            )
+            
+        return total_reward
+
     def _handle_sand_collision(self):
         """Handle car movement on sand"""
         self.car.velocity = Vector(CAR_SPEED_SAND, 0).rotate(self.car.angle)
-        game_state.last_reward = SAND_REWARD
+        game_state.last_reward = self._calculate_distance_reward(SAND_REWARD)
         logger.info(
-            f"Sand collision at ({int(self.car.x)}, {int(self.car.y)}) - "
-            f"Reward: {SAND_REWARD}, Speed: {CAR_SPEED_SAND}"
+            f"Sand collision - Position: ({int(self.car.x)}, {int(self.car.y)}) - "
+            f"Reward: {game_state.last_reward:.2f}, Speed: {CAR_SPEED_SAND}"
         )
 
     def _handle_normal_movement(self, distance):
         """Handle normal car movement"""
         self.car.velocity = Vector(CAR_SPEED_NORMAL, 0).rotate(self.car.angle)
-        game_state.last_reward = ROAD_REWARD
-        if distance < game_state.last_distance:
-            game_state.last_reward = CLOSER_TO_GOAL_REWARD
-            logger.info(
-                f"Moving closer to goal - Distance: {distance:.2f}, "
-                f"Last distance: {game_state.last_distance:.2f}, "
-                f"Reward: {CLOSER_TO_GOAL_REWARD}"
-            )
-        else:
-            logger.debug(
-                f"Normal movement - Distance: {distance:.2f}, "
-                f"Last distance: {game_state.last_distance:.2f}, "
-                f"Reward: {ROAD_REWARD}"
-            )
+        game_state.last_reward = self._calculate_distance_reward(ROAD_REWARD)
 
     def _check_boundaries(self):
         """Check and handle boundary collisions"""

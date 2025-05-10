@@ -24,12 +24,14 @@ class Network(nn.Module):
         self.nb_action = nb_action
         self.fc1 = nn.Linear(input_size, 30)
         self.fc2 = nn.Linear(30, 30)
-        self.fc3 = nn.Linear(30, nb_action)
+        self.fc3 = nn.Linear(30, 30)
+        self.fc4 = nn.Linear(30, nb_action)
 
     def forward(self, state):
         x = F.relu(self.fc1(state))
         x = F.relu(self.fc2(x))
-        q_values = self.fc3(x)
+        x = F.relu(self.fc3(x))
+        q_values = self.fc4(x)
         return q_values
 
 
@@ -67,7 +69,7 @@ class Dqn:
         self.last_action = 0
         self.last_reward = 0
         self.last_save_time = time.time()
-        self.save_interval = 100  # Save every 5 minutes
+        self.save_interval = 60  # Save every 5 minutes
         self.epsilon = 1.0  # Exploration rate
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.995
