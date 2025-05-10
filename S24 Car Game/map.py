@@ -29,6 +29,7 @@ from kivy.graphics import Rectangle
 # Importing the Dqn object from our AI in ai.py
 from ai import Dqn
 
+
 # Configure logging
 def setup_logging():
     """Configure logging with both file and console handlers"""
@@ -38,8 +39,7 @@ def setup_logging():
 
     # Create a custom formatter
     formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
 
     # Create a filter to prevent duplicate messages
@@ -56,7 +56,7 @@ def setup_logging():
             return True
 
     # Create a game-specific logger
-    logger = logging.getLogger('car_game')
+    logger = logging.getLogger("car_game")
     logger.setLevel(logging.DEBUG)
     logger.propagate = False  # Prevent propagation to root logger
 
@@ -79,6 +79,7 @@ def setup_logging():
 
     return logger
 
+
 # Create game logger
 logger = setup_logging()
 
@@ -95,19 +96,19 @@ SPAWN_PADDING = 50
 
 # Hardcoded goal positions
 GOAL_POSITIONS = [
-    (100, 100),      # Top-left
-    (1200, 100),     # Top-right
-    (1200, 500),     # Bottom-right
-    (100, 500),      # Bottom-left
-    (650, 300),      # Center
+    (100, 100),  # Top-left
+    (1200, 100),  # Top-right
+    (1200, 500),  # Bottom-right
+    (100, 500),  # Bottom-left
+    (650, 300),  # Center
 ]
 
 # Reward constants
-SAND_REWARD = -0.5
+SAND_REWARD = -0.4
 BOUNDARY_REWARD = -1
-ROAD_REWARD = -0.2
+ROAD_REWARD = -0.1
 CLOSER_TO_GOAL_REWARD = 0.1
-GOAL_REWARD = 1.0
+GOAL_REWARD = 10.0
 
 # Kivy Configuration
 Config.set("input", "mouse", "mouse,multitouch_on_demand")
@@ -119,6 +120,7 @@ Config.set("graphics", "height", str(WINDOW_HEIGHT))
 @dataclass
 class GameState:
     """Class to hold the game state"""
+
     sand: np.ndarray = None
     goals: List[Tuple[int, int]] = None
     current_goal_index: int = 0
@@ -232,7 +234,7 @@ class Car(Widget):
                 signal_value = self._calculate_signal_value(sensor)
             setattr(self, signal, signal_value)
             signals.append(signal_value)
-        
+
         logger.debug(f"Sensor signals: {signals}")
 
     def _is_sensor_out_of_bounds(self, sensor):
@@ -277,6 +279,7 @@ class Ball3(Widget):
 
 class GoalOrb(Widget):
     """Widget to display goal positions as colored orbs"""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.size = (20, 20)  # Size of the orb
@@ -298,6 +301,7 @@ class GoalOrb(Widget):
 
 class StateDisplay(Widget):
     """Widget to display game state information"""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.size_hint = (None, None)
@@ -308,24 +312,26 @@ class StateDisplay(Widget):
     def _init_labels(self):
         """Initialize state display labels"""
         self.labels = {}
-        states = ['score', 'distance', 'reward', 'epsilon', 'goal']
+        states = ["score", "distance", "reward", "epsilon", "goal"]
         for i, state in enumerate(states):
             label = Label(
                 text=f"{state}: 0",
                 pos=(self.pos[0], self.pos[1] + 120 - i * 25),
                 size=(200, 25),
-                color=(1, 1, 1, 1)
+                color=(1, 0, 0, 1),
             )
             self.labels[state] = label
             self.add_widget(label)
 
     def update(self, game_state, brain):
         """Update state display with current values"""
-        self.labels['score'].text = f"Score: {brain.score():.2f}"
-        self.labels['distance'].text = f"Distance: {game_state.last_distance:.1f}"
-        self.labels['reward'].text = f"Reward: {game_state.last_reward:.2f}"
-        self.labels['epsilon'].text = f"Epsilon: {brain.epsilon:.2f}"
-        self.labels['goal'].text = f"Goal: {game_state.current_goal_index + 1}/{len(game_state.goals)}"
+        self.labels["score"].text = f"Score: {brain.score():.2f}"
+        self.labels["distance"].text = f"Distance: {game_state.last_distance:.1f}"
+        self.labels["reward"].text = f"Reward: {game_state.last_reward:.2f}"
+        self.labels["epsilon"].text = f"Epsilon: {brain.epsilon:.2f}"
+        self.labels["goal"].text = (
+            f"Goal: {game_state.current_goal_index + 1}/{len(game_state.goals)}"
+        )
 
 
 class Game(Widget):
@@ -424,7 +430,7 @@ class Game(Widget):
             self.car.signal3,
             orientation,
             -orientation,
-            distance / WINDOW_WIDTH  # Normalized distance
+            distance / WINDOW_WIDTH,  # Normalized distance
         ]
 
     def _update_car_position(self):
@@ -444,8 +450,8 @@ class Game(Widget):
         if not game_state.current_goal:
             return 0
         return np.sqrt(
-            (self.car.x - game_state.current_goal[0])**2 + 
-            (self.car.y - game_state.current_goal[1])**2
+            (self.car.x - game_state.current_goal[0]) ** 2
+            + (self.car.y - game_state.current_goal[1]) ** 2
         )
 
     def _update_sensor_balls(self):
@@ -518,9 +524,15 @@ class Game(Widget):
         distance = self._calculate_distance()
         if distance < GOAL_DISTANCE_THRESHOLD:
             # Update goal orbs
-            self.goal_orbs[game_state.current_goal_index].set_color(0, 0, 1)  # Blue for reached
-            game_state.current_goal_index = (game_state.current_goal_index + 1) % len(game_state.goals)
-            self.goal_orbs[game_state.current_goal_index].set_color(0, 1, 0)  # Green for current
+            self.goal_orbs[game_state.current_goal_index].set_color(
+                0, 0, 1
+            )  # Blue for reached
+            game_state.current_goal_index = (game_state.current_goal_index + 1) % len(
+                game_state.goals
+            )
+            self.goal_orbs[game_state.current_goal_index].set_color(
+                0, 1, 0
+            )  # Green for current
             for i in range(len(self.goal_orbs)):
                 if i != game_state.current_goal_index:
                     self.goal_orbs[i].set_color(0.5, 0.5, 0.5)  # Gray for others
@@ -542,61 +554,17 @@ class Game(Widget):
             )
 
 
-# Adding the painting tools
-
-
-class MyPaintWidget(Widget):
-
-    def on_touch_down(self, touch):
-        global length, n_points, last_x, last_y
-        with self.canvas:
-            Color(0.8, 0.7, 0)
-            d = 10.0
-            touch.ud["line"] = Line(points=(touch.x, touch.y), width=10)
-            last_x = int(touch.x)
-            last_y = int(touch.y)
-            n_points = 0
-            length = 0
-            sand[int(touch.x), int(touch.y)] = 1
-            img = PILImage.fromarray(sand.astype("uint8") * 255)
-            img.save("./images/sand.jpg")
-
-    def on_touch_move(self, touch):
-        global length, n_points, last_x, last_y
-        if touch.button == "left":
-            touch.ud["line"].points += [touch.x, touch.y]
-            x = int(touch.x)
-            y = int(touch.y)
-            length += np.sqrt(max((x - last_x) ** 2 + (y - last_y) ** 2, 2))
-            n_points += 1.0
-            density = n_points / (length)
-            touch.ud["line"].width = int(20 * density + 1)
-            sand[
-                int(touch.x) - 10 : int(touch.x) + 10,
-                int(touch.y) - 10 : int(touch.y) + 10,
-            ] = 1
-
-            last_x = x
-            last_y = y
-
-
-# Adding the API Buttons (clear, save and load)
-
-
 class CarApp(App):
 
     def build(self):
         parent = Game()
         parent.serve_car()
         Clock.schedule_interval(parent.update, 1.0 / 30.0)
-        self.painter = MyPaintWidget()
         clearbtn = Button(text="clear", size=(40, 40))
         savebtn = Button(text="save", size=(40, 40), pos=(parent.width, 0))
         loadbtn = Button(text="load", size=(40, 40), pos=(2 * parent.width, 0))
-        clearbtn.bind(on_release=self.clear_canvas)
         savebtn.bind(on_release=self.save)
         loadbtn.bind(on_release=self.load)
-        parent.add_widget(self.painter)
         parent.add_widget(clearbtn)
         parent.add_widget(savebtn)
         parent.add_widget(loadbtn)
@@ -604,7 +572,6 @@ class CarApp(App):
 
     def clear_canvas(self, obj):
         global sand
-        self.painter.canvas.clear()
         sand = np.zeros((longueur, largeur))
 
     def save(self, obj):
