@@ -8,6 +8,8 @@ import time
 import logging
 from dataclasses import dataclass
 from typing import List, Tuple
+import os
+from datetime import datetime
 
 # Importing the Kivy packages
 from kivy.app import App
@@ -26,8 +28,57 @@ from kivy.graphics.texture import Texture
 from ai import Dqn
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+def setup_logging():
+    """Configure logging with both file and console handlers"""
+    # Create logs directory if it doesn't exist
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+
+    # Create a custom formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    # Create a filter to prevent duplicate messages
+    class DuplicateFilter(logging.Filter):
+        def __init__(self):
+            super().__init__()
+            self.last_log = None
+
+        def filter(self, record):
+            current_log = (record.levelno, record.getMessage())
+            if current_log == self.last_log:
+                return False
+            self.last_log = current_log
+            return True
+
+    # Create a game-specific logger
+    logger = logging.getLogger('car_game')
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False  # Prevent propagation to root logger
+
+    # File handler
+    log_file = f"logs/car_game_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.addFilter(DuplicateFilter())
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.INFO)
+    console_handler.addFilter(DuplicateFilter())
+
+    # Add handlers to logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
+
+# Create game logger
+logger = setup_logging()
 
 # Constants
 WINDOW_WIDTH = 1429
@@ -154,16 +205,20 @@ class Car(Widget):
 
     def _update_signals(self):
         """Update sensor signals based on sand detection"""
+        signals = []
         for sensor, signal in [
             (self.sensor1, "signal1"),
             (self.sensor2, "signal2"),
             (self.sensor3, "signal3"),
         ]:
             if self._is_sensor_out_of_bounds(sensor):
-                setattr(self, signal, 10.0)
+                signal_value = 10.0
             else:
                 signal_value = self._calculate_signal_value(sensor)
-                setattr(self, signal, signal_value)
+            setattr(self, signal, signal_value)
+            signals.append(signal_value)
+        
+        logger.debug(f"Sensor signals: {signals}")
 
     def _is_sensor_out_of_bounds(self, sensor):
         """Check if sensor is out of map bounds"""
@@ -205,6 +260,27 @@ class Ball3(Widget):
 # Creating the game class
 
 
+class GoalOrb(Widget):
+    """Widget to display goal positions as colored orbs"""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.size = (20, 20)  # Size of the orb
+        self.color = (0, 1, 0, 1)  # Green color with full opacity
+        self._update_canvas()
+
+    def _update_canvas(self):
+        """Update the orb's visual representation"""
+        self.canvas.clear()
+        with self.canvas:
+            Color(*self.color)
+            Ellipse(pos=self.pos, size=self.size)
+
+    def set_color(self, r, g, b, a=1):
+        """Set the orb's color"""
+        self.color = (r, g, b, a)
+        self._update_canvas()
+
+
 class Game(Widget):
     """Main game class handling the game logic"""
 
@@ -212,6 +288,26 @@ class Game(Widget):
     ball1 = ObjectProperty(None)
     ball2 = ObjectProperty(None)
     ball3 = ObjectProperty(None)
+    start_goal = ObjectProperty(None)
+    end_goal = ObjectProperty(None)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._init_goals()
+
+    def _init_goals(self):
+        """Initialize goal orbs"""
+        # Create start goal orb
+        self.start_goal = GoalOrb()
+        self.start_goal.pos = (GOAL_POSITIONS["start"][0] - 10, GOAL_POSITIONS["start"][1] - 10)
+        self.start_goal.set_color(0, 1, 0)  # Green for start
+        self.add_widget(self.start_goal)
+
+        # Create end goal orb
+        self.end_goal = GoalOrb()
+        self.end_goal.pos = (GOAL_POSITIONS["end"][0] - 10, GOAL_POSITIONS["end"][1] - 10)
+        self.end_goal.set_color(1, 0, 0)  # Red for end
+        self.add_widget(self.end_goal)
 
     def serve_car(self):
         """Initialize car position"""
@@ -222,12 +318,23 @@ class Game(Widget):
         """Main update loop"""
         if game_state.first_update:
             init_game_state()
+            logger.info("Game initialized")
 
         self._update_dimensions()
         self._process_ai_decision()
         self._update_car_position()
         self._check_boundaries()
         self._check_goal_reached()
+        
+        # Log summary every 100 frames
+        if int(time.time() * 30) % 100 == 0:  # Assuming 30 FPS
+            logger.info(
+                f"Game State Summary - "
+                f"Position: ({self.car.x:.1f}, {self.car.y:.1f}), "
+                f"Distance to goal: {self._calculate_distance():.2f}, "
+                f"Last reward: {game_state.last_reward:.2f}, "
+                f"Score: {brain.score():.2f}"
+            )
 
     def _update_dimensions(self):
         """Update game dimensions"""
@@ -242,6 +349,12 @@ class Game(Widget):
         action = brain.update(game_state.last_reward, last_signal)
         game_state.scores.append(brain.score())
         rotation = action2rotation[action]
+        
+        logger.debug(
+            f"AI Decision - Action: {action}, Rotation: {rotation}, "
+            f"Score: {brain.score():.2f}, Orientation: {orientation:.2f}"
+        )
+        
         self.car.move(rotation)
 
     def _calculate_orientation(self):
@@ -293,41 +406,83 @@ class Game(Widget):
         """Handle car movement on sand"""
         self.car.velocity = Vector(CAR_SPEED_SAND, 0).rotate(self.car.angle)
         game_state.last_reward = SAND_REWARD
-        logger.debug(f"Sand collision at ({int(self.car.x)}, {int(self.car.y)})")
+        logger.info(
+            f"Sand collision at ({int(self.car.x)}, {int(self.car.y)}) - "
+            f"Reward: {SAND_REWARD}, Speed: {CAR_SPEED_SAND}"
+        )
 
     def _handle_normal_movement(self, distance):
         """Handle normal car movement"""
         self.car.velocity = Vector(CAR_SPEED_NORMAL, 0).rotate(self.car.angle)
         game_state.last_reward = ROAD_REWARD
         if distance < game_state.last_distance:
-            game_state.last_reward = GOAL_REWARD
+            game_state.last_reward = CLOSER_TO_GOAL_REWARD
+            logger.info(
+                f"Moving closer to goal - Distance: {distance:.2f}, "
+                f"Last distance: {game_state.last_distance:.2f}, "
+                f"Reward: {CLOSER_TO_GOAL_REWARD}"
+            )
+        else:
+            logger.debug(
+                f"Normal movement - Distance: {distance:.2f}, "
+                f"Last distance: {game_state.last_distance:.2f}, "
+                f"Reward: {ROAD_REWARD}"
+            )
 
     def _check_boundaries(self):
         """Check and handle boundary collisions"""
+        old_x, old_y = self.car.x, self.car.y
+        hit_boundary = False
+        
         if self.car.x < BOUNDARY_PADDING:
             self.car.x = BOUNDARY_PADDING
             game_state.last_reward = BOUNDARY_REWARD
+            hit_boundary = True
         elif self.car.x > self.width - BOUNDARY_PADDING:
             self.car.x = self.width - BOUNDARY_PADDING
             game_state.last_reward = BOUNDARY_REWARD
+            hit_boundary = True
         if self.car.y < BOUNDARY_PADDING:
             self.car.y = BOUNDARY_PADDING
             game_state.last_reward = BOUNDARY_REWARD
+            hit_boundary = True
         elif self.car.y > self.height - BOUNDARY_PADDING:
             self.car.y = self.height - BOUNDARY_PADDING
             game_state.last_reward = BOUNDARY_REWARD
+            hit_boundary = True
+            
+        if hit_boundary:
+            logger.info(
+                f"Boundary collision - Position: ({old_x:.1f}, {old_y:.1f}) -> "
+                f"({self.car.x:.1f}, {self.car.y:.1f}), Reward: {BOUNDARY_REWARD}"
+            )
 
     def _check_goal_reached(self):
         """Check if goal is reached and update goal position"""
-        if self._calculate_distance() < GOAL_DISTANCE_THRESHOLD:
+        distance = self._calculate_distance()
+        if distance < GOAL_DISTANCE_THRESHOLD:
+            old_goal = (game_state.goal_x, game_state.goal_y)
             if game_state.swap == 1:
                 game_state.goal_x, game_state.goal_y = GOAL_POSITIONS["end"]
                 game_state.swap = 0
+                self.start_goal.set_color(0, 1, 0)  # Green
+                self.end_goal.set_color(1, 0, 0)    # Red
             else:
                 game_state.goal_x, game_state.goal_y = GOAL_POSITIONS["start"]
                 game_state.swap = 1
+                self.start_goal.set_color(1, 0, 0)  # Red
+                self.end_goal.set_color(0, 1, 0)    # Green
+            
             logger.info(
-                f"Goal reached! New goal: ({game_state.goal_x}, {game_state.goal_y})"
+                f"Goal reached! - Distance: {distance:.2f}, "
+                f"Old goal: {old_goal}, New goal: ({game_state.goal_x}, {game_state.goal_y}), "
+                f"Car position: ({self.car.x:.1f}, {self.car.y:.1f})"
+            )
+        else:
+            logger.debug(
+                f"Distance to goal: {distance:.2f}, "
+                f"Car position: ({self.car.x:.1f}, {self.car.y:.1f}), "
+                f"Goal: ({game_state.goal_x}, {game_state.goal_y})"
             )
 
 
