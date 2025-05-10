@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.autograd as autograd
 from torch.autograd import Variable
+import time
 
 # Creating the architecture of the Neural Network
 
@@ -60,11 +61,29 @@ class Dqn():
         self.last_state = torch.Tensor(input_size).unsqueeze(0)
         self.last_action = 0
         self.last_reward = 0
+        self.last_save_time = time.time()
+        self.save_interval = 300  # Save every 5 minutes
+        self.epsilon = 1.0  # Exploration rate
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.995
+        self.batch_size = 100
+        self.learning_rate = 0.001
+        
+        # Initialize target network for stable learning
+        self.target_network = Network(input_size, nb_action)
+        self.target_network.load_state_dict(self.model.state_dict())
+        self.target_update_frequency = 1000
+        self.steps = 0
     
     def select_action(self, state):
-        probs = F.softmax(self.model(Variable(state, volatile = True))*100) # T=100
-        action = probs.multinomial(1)
-        return action.data[0,0]
+        if random.random() < self.epsilon:
+            # Exploration: random action
+            return random.randint(0, self.model.nb_action - 1)
+        else:
+            # Exploitation: best action
+            probs = F.softmax(self.model(Variable(state, volatile = True))*100)
+            action = probs.multinomial(1)
+            return action.data[0,0]
     
     def learn(self, batch_state, batch_next_state, batch_reward, batch_action):
         outputs = self.model(batch_state).gather(1, batch_action.unsqueeze(1)).squeeze(1)
@@ -74,36 +93,70 @@ class Dqn():
         self.optimizer.zero_grad()
         td_loss.backward(retain_graph = True)
         self.optimizer.step()
+        
+        # Decay epsilon
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
     
     def update(self, reward, new_signal):
+        # Ensure new_signal includes distance to goal
+        if len(new_signal) != self.model.input_size:
+            raise ValueError(f"Expected input size {self.model.input_size}, got {len(new_signal)}")
+            
         new_state = torch.Tensor(new_signal).float().unsqueeze(0)
         self.memory.push((self.last_state, new_state, torch.LongTensor([int(self.last_action)]), torch.Tensor([self.last_reward])))
         action = self.select_action(new_state)
-        if len(self.memory.memory) > 100:
-            batch_state, batch_next_state, batch_action, batch_reward = self.memory.sample(100)
+        
+        # Learn from experience if we have enough samples
+        if len(self.memory.memory) > self.batch_size:
+            batch_state, batch_next_state, batch_action, batch_reward = self.memory.sample(self.batch_size)
             self.learn(batch_state, batch_next_state, batch_reward, batch_action)
+        
         self.last_action = action
         self.last_state = new_state
         self.last_reward = reward
         self.reward_window.append(reward)
         if len(self.reward_window) > 1000:
             del self.reward_window[0]
+            
+        # Periodic saving
+        current_time = time.time()
+        if current_time - self.last_save_time > self.save_interval:
+            self.save()
+            self.last_save_time = current_time
+            
         return action
     
     def score(self):
         return sum(self.reward_window)/(len(self.reward_window)+1.)
     
     def save(self):
-        torch.save({'state_dict': self.model.state_dict(),
-                    'optimizer' : self.optimizer.state_dict(),
-                   }, 'last_brain.pth')
+        save_path = 'last_brain.pth'
+        backup_path = 'last_brain_backup.pth'
+        
+        # Create backup of previous save if it exists
+        if os.path.exists(save_path):
+            os.replace(save_path, backup_path)
+            
+        torch.save({
+            'state_dict': self.model.state_dict(),
+            'target_state_dict': self.target_network.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'epsilon': self.epsilon,
+            'reward_window': self.reward_window,
+            'steps': self.steps
+        }, save_path)
     
     def load(self):
         if os.path.isfile('last_brain.pth'):
             print("=> loading checkpoint... ")
             checkpoint = torch.load('last_brain.pth')
             self.model.load_state_dict(checkpoint['state_dict'])
+            self.target_network.load_state_dict(checkpoint.get('target_state_dict', checkpoint['state_dict']))
             self.optimizer.load_state_dict(checkpoint['optimizer'])
+            self.epsilon = checkpoint.get('epsilon', 1.0)
+            self.reward_window = checkpoint.get('reward_window', [])
+            self.steps = checkpoint.get('steps', 0)
             print("done !")
         else:
             print("no checkpoint found...")

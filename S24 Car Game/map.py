@@ -2,7 +2,7 @@
 
 # Importing the libraries
 import numpy as np
-from random import random, randint
+from random import random
 import matplotlib.pyplot as plt
 import time
 import logging
@@ -23,6 +23,8 @@ from kivy.clock import Clock
 from kivy.core.image import Image as CoreImage
 from PIL import Image as PILImage
 from kivy.graphics.texture import Texture
+from kivy.uix.label import Label
+from kivy.graphics import Rectangle
 
 # Importing the Dqn object from our AI in ai.py
 from ai import Dqn
@@ -89,12 +91,23 @@ SENSOR_DISTANCE = 30
 SENSOR_RANGE = 10
 GOAL_DISTANCE_THRESHOLD = 25
 BOUNDARY_PADDING = 5
-GOAL_POSITIONS = {"start": (9, 85), "end": (1420, 622)}
-BOUNDARY_REWARD = -1
+SPAWN_PADDING = 50
+
+# Hardcoded goal positions
+GOAL_POSITIONS = [
+    (100, 100),      # Top-left
+    (1200, 100),     # Top-right
+    (1200, 500),     # Bottom-right
+    (100, 500),      # Bottom-left
+    (650, 300),      # Center
+]
+
+# Reward constants
 SAND_REWARD = -0.5
+BOUNDARY_REWARD = -1
 ROAD_REWARD = -0.2
 CLOSER_TO_GOAL_REWARD = 0.1
-GOAL_REWARD = 1
+GOAL_REWARD = 1.0
 
 # Kivy Configuration
 Config.set("input", "mouse", "mouse,multitouch_on_demand")
@@ -106,24 +119,28 @@ Config.set("graphics", "height", str(WINDOW_HEIGHT))
 @dataclass
 class GameState:
     """Class to hold the game state"""
-
     sand: np.ndarray = None
-    goal_x: int = GOAL_POSITIONS["start"][0]
-    goal_y: int = GOAL_POSITIONS["start"][1]
+    goals: List[Tuple[int, int]] = None
+    current_goal_index: int = 0
     last_distance: float = 0
     last_reward: float = 0
     scores: List[float] = None
-    swap: int = 0
     first_update: bool = True
 
     def __post_init__(self):
         if self.scores is None:
             self.scores = []
+        if self.goals is None:
+            self.goals = []
+
+    @property
+    def current_goal(self):
+        return self.goals[self.current_goal_index] if self.goals else None
 
 
 # Global variables
 game_state = GameState()
-brain = Dqn(5, 3, 0.9)
+brain = Dqn(6, 3, 0.9)
 action2rotation = [0, 5, -5]
 im = CoreImage("./images/MASK1.png")
 
@@ -133,9 +150,7 @@ def init_game_state():
     global game_state
     img = PILImage.open("./images/mask.png").convert("L")
     game_state.sand = np.asarray(img) / 255
-    game_state.goal_x, game_state.goal_y = GOAL_POSITIONS["start"]
     game_state.first_update = False
-    game_state.swap = 0
     logger.info("Game state initialized")
 
 
@@ -281,6 +296,38 @@ class GoalOrb(Widget):
         self._update_canvas()
 
 
+class StateDisplay(Widget):
+    """Widget to display game state information"""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.size_hint = (None, None)
+        self.size = (200, 150)
+        self.pos = (10, WINDOW_HEIGHT - 160)
+        self._init_labels()
+
+    def _init_labels(self):
+        """Initialize state display labels"""
+        self.labels = {}
+        states = ['score', 'distance', 'reward', 'epsilon', 'goal']
+        for i, state in enumerate(states):
+            label = Label(
+                text=f"{state}: 0",
+                pos=(self.pos[0], self.pos[1] + 120 - i * 25),
+                size=(200, 25),
+                color=(1, 1, 1, 1)
+            )
+            self.labels[state] = label
+            self.add_widget(label)
+
+    def update(self, game_state, brain):
+        """Update state display with current values"""
+        self.labels['score'].text = f"Score: {brain.score():.2f}"
+        self.labels['distance'].text = f"Distance: {game_state.last_distance:.1f}"
+        self.labels['reward'].text = f"Reward: {game_state.last_reward:.2f}"
+        self.labels['epsilon'].text = f"Epsilon: {brain.epsilon:.2f}"
+        self.labels['goal'].text = f"Goal: {game_state.current_goal_index + 1}/{len(game_state.goals)}"
+
+
 class Game(Widget):
     """Main game class handling the game logic"""
 
@@ -288,26 +335,27 @@ class Game(Widget):
     ball1 = ObjectProperty(None)
     ball2 = ObjectProperty(None)
     ball3 = ObjectProperty(None)
-    start_goal = ObjectProperty(None)
-    end_goal = ObjectProperty(None)
+    state_display = ObjectProperty(None)
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        self.state_display = StateDisplay()
+        self.add_widget(self.state_display)
         self._init_goals()
 
     def _init_goals(self):
-        """Initialize goal orbs"""
-        # Create start goal orb
-        self.start_goal = GoalOrb()
-        self.start_goal.pos = (GOAL_POSITIONS["start"][0] - 10, GOAL_POSITIONS["start"][1] - 10)
-        self.start_goal.set_color(0, 1, 0)  # Green for start
-        self.add_widget(self.start_goal)
+        """Initialize goals with hardcoded positions"""
+        game_state.goals = GOAL_POSITIONS
 
-        # Create end goal orb
-        self.end_goal = GoalOrb()
-        self.end_goal.pos = (GOAL_POSITIONS["end"][0] - 10, GOAL_POSITIONS["end"][1] - 10)
-        self.end_goal.set_color(1, 0, 0)  # Red for end
-        self.add_widget(self.end_goal)
+        # Create goal orbs
+        self.goal_orbs = []
+        for i, goal in enumerate(game_state.goals):
+            orb = GoalOrb()
+            orb.pos = (goal[0] - 10, goal[1] - 10)
+            orb.set_color(0, 1, 0) if i == 0 else orb.set_color(0.5, 0.5, 0.5)
+            self.goal_orbs.append(orb)
+            self.add_widget(orb)
+            logger.info(f"Initialized goal {i+1} at position {goal}")
 
     def serve_car(self):
         """Initialize car position"""
@@ -325,7 +373,7 @@ class Game(Widget):
         self._update_car_position()
         self._check_boundaries()
         self._check_goal_reached()
-        
+
         # Log summary every 100 frames
         if int(time.time() * 30) % 100 == 0:  # Assuming 30 FPS
             logger.info(
@@ -345,32 +393,38 @@ class Game(Widget):
     def _process_ai_decision(self):
         """Process AI decision and update car movement"""
         orientation = self._calculate_orientation()
-        last_signal = self._get_sensor_signals(orientation)
+        distance = self._calculate_distance()
+        last_signal = self._get_sensor_signals(orientation, distance)
         action = brain.update(game_state.last_reward, last_signal)
         game_state.scores.append(brain.score())
         rotation = action2rotation[action]
-        
+
         logger.debug(
             f"AI Decision - Action: {action}, Rotation: {rotation}, "
-            f"Score: {brain.score():.2f}, Orientation: {orientation:.2f}"
+            f"Score: {brain.score():.2f}, Orientation: {orientation:.2f}, "
+            f"Distance: {distance:.2f}"
         )
-        
+
         self.car.move(rotation)
+        self.state_display.update(game_state, brain)
 
     def _calculate_orientation(self):
         """Calculate orientation towards goal"""
-        xx = game_state.goal_x - self.car.x
-        yy = game_state.goal_y - self.car.y
+        if not game_state.current_goal:
+            return 0
+        xx = game_state.current_goal[0] - self.car.x
+        yy = game_state.current_goal[1] - self.car.y
         return Vector(*self.car.velocity).angle((xx, yy)) / 180.0
 
-    def _get_sensor_signals(self, orientation):
-        """Get all sensor signals"""
+    def _get_sensor_signals(self, orientation, distance):
+        """Get all sensor signals including distance to goal"""
         return [
             self.car.signal1,
             self.car.signal2,
             self.car.signal3,
             orientation,
             -orientation,
+            distance / WINDOW_WIDTH  # Normalized distance
         ]
 
     def _update_car_position(self):
@@ -386,10 +440,12 @@ class Game(Widget):
         game_state.last_distance = distance
 
     def _calculate_distance(self):
-        """Calculate distance to goal"""
+        """Calculate distance to current goal"""
+        if not game_state.current_goal:
+            return 0
         return np.sqrt(
-            (self.car.x - game_state.goal_x) ** 2
-            + (self.car.y - game_state.goal_y) ** 2
+            (self.car.x - game_state.current_goal[0])**2 + 
+            (self.car.y - game_state.current_goal[1])**2
         )
 
     def _update_sensor_balls(self):
@@ -433,7 +489,7 @@ class Game(Widget):
         """Check and handle boundary collisions"""
         old_x, old_y = self.car.x, self.car.y
         hit_boundary = False
-        
+
         if self.car.x < BOUNDARY_PADDING:
             self.car.x = BOUNDARY_PADDING
             game_state.last_reward = BOUNDARY_REWARD
@@ -450,7 +506,7 @@ class Game(Widget):
             self.car.y = self.height - BOUNDARY_PADDING
             game_state.last_reward = BOUNDARY_REWARD
             hit_boundary = True
-            
+
         if hit_boundary:
             logger.info(
                 f"Boundary collision - Position: ({old_x:.1f}, {old_y:.1f}) -> "
@@ -458,31 +514,31 @@ class Game(Widget):
             )
 
     def _check_goal_reached(self):
-        """Check if goal is reached and update goal position"""
+        """Check if goal is reached and update to next goal"""
         distance = self._calculate_distance()
         if distance < GOAL_DISTANCE_THRESHOLD:
-            old_goal = (game_state.goal_x, game_state.goal_y)
-            if game_state.swap == 1:
-                game_state.goal_x, game_state.goal_y = GOAL_POSITIONS["end"]
-                game_state.swap = 0
-                self.start_goal.set_color(0, 1, 0)  # Green
-                self.end_goal.set_color(1, 0, 0)    # Red
-            else:
-                game_state.goal_x, game_state.goal_y = GOAL_POSITIONS["start"]
-                game_state.swap = 1
-                self.start_goal.set_color(1, 0, 0)  # Red
-                self.end_goal.set_color(0, 1, 0)    # Green
-            
+            # Update goal orbs
+            self.goal_orbs[game_state.current_goal_index].set_color(0, 0, 1)  # Blue for reached
+            game_state.current_goal_index = (game_state.current_goal_index + 1) % len(game_state.goals)
+            self.goal_orbs[game_state.current_goal_index].set_color(0, 1, 0)  # Green for current
+            for i in range(len(self.goal_orbs)):
+                if i != game_state.current_goal_index:
+                    self.goal_orbs[i].set_color(0.5, 0.5, 0.5)  # Gray for others
+
+            # Randomly respawn car
+            self.serve_car()
+
             logger.info(
                 f"Goal reached! - Distance: {distance:.2f}, "
-                f"Old goal: {old_goal}, New goal: ({game_state.goal_x}, {game_state.goal_y}), "
+                f"New goal index: {game_state.current_goal_index}, "
                 f"Car position: ({self.car.x:.1f}, {self.car.y:.1f})"
             )
+            game_state.last_reward = GOAL_REWARD
         else:
             logger.debug(
                 f"Distance to goal: {distance:.2f}, "
                 f"Car position: ({self.car.x:.1f}, {self.car.y:.1f}), "
-                f"Goal: ({game_state.goal_x}, {game_state.goal_y})"
+                f"Goal: {game_state.current_goal}"
             )
 
 
