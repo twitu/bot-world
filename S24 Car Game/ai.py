@@ -59,7 +59,7 @@ class ReplayMemory(object):
 
 class Dqn:
 
-    def __init__(self, input_size, nb_action, gamma):
+    def __init__(self, input_size, nb_action, gamma, training_mode: bool = True):
         self.gamma = gamma
         self.reward_window = []
         self.model = Network(input_size, nb_action)
@@ -70,11 +70,10 @@ class Dqn:
         self.last_reward = 0
         self.last_save_time = time.time()
         self.save_interval = 60  # Save every 5 minutes
-        self.epsilon = 1.0  # Exploration rate
-        self.epsilon_min = 0.01
-        self.epsilon_decay = 0.995
+        self.epsilon = 0.6  # Exploration rate
         self.batch_size = 100
         self.learning_rate = 0.001
+        self.training_mode = training_mode
 
         # Initialize target network for stable learning
         self.target_network = Network(input_size, nb_action)
@@ -83,7 +82,7 @@ class Dqn:
         self.steps = 0
 
     def select_action(self, state):
-        if random.random() < self.epsilon:
+        if (random.random() < self.epsilon) and self.training_mode:
             # Exploration: random action
             return random.randint(0, self.model.nb_action - 1)
         else:
@@ -104,10 +103,6 @@ class Dqn:
         td_loss.backward(retain_graph=True)
         self.optimizer.step()
 
-        # Decay epsilon
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
-
     def update(self, reward, new_signal):
         # Ensure new_signal includes distance to goal
         if len(new_signal) != self.model.input_size:
@@ -127,7 +122,7 @@ class Dqn:
         action = self.select_action(new_state)
 
         # Learn from experience if we have enough samples
-        if len(self.memory.memory) > self.batch_size:
+        if len(self.memory.memory) > self.batch_size and self.training_mode:
             batch_state, batch_next_state, batch_action, batch_reward = (
                 self.memory.sample(self.batch_size)
             )
@@ -141,10 +136,11 @@ class Dqn:
             del self.reward_window[0]
 
         # Periodic saving
-        current_time = time.time()
-        if current_time - self.last_save_time > self.save_interval:
-            self.save()
-            self.last_save_time = current_time
+        if self.training_mode:
+            current_time = time.time()
+            if current_time - self.last_save_time > self.save_interval:
+                self.save()
+                self.last_save_time = current_time
 
         return action
 

@@ -94,6 +94,12 @@ GOAL_DISTANCE_THRESHOLD = 25
 BOUNDARY_PADDING = 5
 SPAWN_PADDING = 50
 
+# GOAL_POSITIONS = [
+#     (200, 200),  # Top-left
+#     (1200, 300),  # Top-right
+#     (600, 300),  # Bottom-right
+# ]
+
 # Hardcoded goal positions
 GOAL_POSITIONS = [
     (100, 100),  # Top-left
@@ -104,10 +110,10 @@ GOAL_POSITIONS = [
 ]
 
 # Reward constants
-SAND_REWARD = -0.4
-BOUNDARY_REWARD = -1
+SAND_REWARD = -0.5
+BOUNDARY_REWARD = -2
 ROAD_REWARD = -0.1
-CLOSER_TO_GOAL_REWARD = 0.1
+CLOSER_TO_GOAL_REWARD = 0.4
 GOAL_REWARD = 10.0
 
 # Kivy Configuration
@@ -144,9 +150,8 @@ class GameState:
 
 # Global variables
 game_state = GameState()
-brain = Dqn(6, 3, 0.9)
+brain = Dqn(6, 3, 0.9, training_mode=True)
 action2rotation = [0, 5, -5]
-im = CoreImage("./images/MASK1.png")
 
 
 def init_game_state():
@@ -156,31 +161,6 @@ def init_game_state():
     game_state.sand = np.asarray(img) / 255
     game_state.first_update = False
     logger.info("Game state initialized")
-
-
-# Initializing the map
-first_update = True
-
-
-def init():
-    global sand
-    global goal_x
-    global goal_y
-    global first_update
-    sand = np.zeros((longueur, largeur))
-    img = PILImage.open("./images/mask.png").convert("L")
-    sand = np.asarray(img) / 255
-    goal_x = 1420
-    goal_y = 622
-    first_update = False
-    global swap
-    swap = 0
-
-
-# Initializing the last distance
-last_distance = 0
-
-# Creating the car class
 
 
 class Car(Widget):
@@ -304,17 +284,18 @@ class GoalOrb(Widget):
 class StateDisplay(Widget):
     """Widget to display game state information"""
 
-    def __init__(self, **kwargs):
+    def __init__(self, car, **kwargs):
         super().__init__(**kwargs)
         self.size_hint = (None, None)
         self.size = (200, 150)
         self.pos = (10, WINDOW_HEIGHT - 160)
+        self.car = car
         self._init_labels()
 
     def _init_labels(self):
         """Initialize state display labels"""
         self.labels = {}
-        states = ["score", "distance", "reward", "epsilon", "goal"]
+        states = ["score", "distance", "reward", "goal", "position", "sand"]
         for i, state in enumerate(states):
             label = Label(
                 text=f"{state}: 0",
@@ -330,11 +311,11 @@ class StateDisplay(Widget):
         self.labels["score"].text = f"Score: {brain.score():.2f}"
         self.labels["distance"].text = f"Distance: {game_state.last_distance:.1f}"
         self.labels["reward"].text = f"Reward: {game_state.last_reward:.2f}"
-        self.labels["epsilon"].text = f"Epsilon: {brain.epsilon:.2f}"
         self.labels["goal"].text = (
             f"Goal: {game_state.current_goal_index + 1}/{len(game_state.goals)}"
         )
-
+        self.labels["position"].text = f"Position: ({self.car.x:.1f}, {self.car.y:.1f})"
+        self.labels["sand"].text = f"Sand: {game_state.sand[int(self.car.x), int(self.car.y)]}"
 
 class Game(Widget):
     """Main game class handling the game logic"""
@@ -347,7 +328,7 @@ class Game(Widget):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.state_display = StateDisplay()
+        self.state_display = StateDisplay(self.car)
         self.add_widget(self.state_display)
         self._init_goals()
 
@@ -470,7 +451,7 @@ class Game(Widget):
         """Calculate reward based on distance to goal and add to base reward"""
         distance = self._calculate_distance()
         total_reward = base_reward
-        
+
         if distance < game_state.last_distance:
             total_reward += CLOSER_TO_GOAL_REWARD
             logger.info(
@@ -484,7 +465,7 @@ class Game(Widget):
                 f"Last distance: {game_state.last_distance:.2f}, "
                 f"Reward: {total_reward:.2f}"
             )
-            
+
         return total_reward
 
     def _handle_sand_collision(self):
@@ -546,9 +527,6 @@ class Game(Widget):
             for i in range(len(self.goal_orbs)):
                 if i != game_state.current_goal_index:
                     self.goal_orbs[i].set_color(0.5, 0.5, 0.5)  # Gray for others
-
-            # Randomly respawn car
-            self.serve_car()
 
             logger.info(
                 f"Goal reached! - Distance: {distance:.2f}, "
